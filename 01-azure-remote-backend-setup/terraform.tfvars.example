@@ -1,0 +1,18 @@
+# Example Terraform Variables
+# Copy this file to terraform.tfvars and customize as needed
+
+# Project name - used for resource naming
+project_name = "devopslab"
+
+# Environment (dev, staging, prod, etc.)
+environment = "dev"
+
+# Azure region
+location = "eastus"
+
+# Optional: Override auto-generated resource group name
+# backend_resource_group_name = "rg-custom-tfstate"
+
+# Optional: Override auto-generated storage account name
+# Must be 3-24 characters, lowercase alphanumeric only
+# backend_storage_account_name = "sacustomtfstate"
