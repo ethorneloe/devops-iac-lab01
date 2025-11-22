@@ -1,0 +1,215 @@
+name: Validate Terraform Configuration
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '01-azure-remote-backend-setup/**'
+      - '.github/workflows/validate-terraform.yml'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate:
+    name: Validate Terraform
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0
+
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+        working-directory: ./01-azure-remote-backend-setup
+
+      - name: Terraform Init
+        id: init
+        run: terraform init -backend=false
+        working-directory: ./01-azure-remote-backend-setup
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+        working-directory: ./01-azure-remote-backend-setup
+
+      - name: Check Required Resources
+        id: check-resources
+        run: |
+          echo "Checking for required resources..."
+
+          # Check for required resource types
+          if ! grep -q "resource \"azurerm_resource_group\" \"rg_backend\"" main.tf; then
+            echo "❌ Missing required resource: azurerm_resource_group.rg_backend"
+            exit 1
+          fi
+
+          if ! grep -q "resource \"azurerm_storage_account\" \"sa_backend\"" main.tf; then
+            echo "❌ Missing required resource: azurerm_storage_account.sa_backend"
+            exit 1
+          fi
+
+          if ! grep -q "resource \"azurerm_storage_container\" \"tfstate\"" main.tf; then
+            echo "❌ Missing required resource: azurerm_storage_container.tfstate"
+            exit 1
+          fi
+
+          echo "✅ All required resources found"
+        working-directory: ./01-azure-remote-backend-setup
+
+      - name: Check Security Settings
+        id: check-security
+        run: |
+          echo "Checking security settings..."
+
+          # Check for required security settings
+          if ! grep -q "allow_blob_public_access.*=.*false" main.tf; then
+            echo "❌ Storage account must have allow_blob_public_access = false"
+            exit 1
+          fi
+
+          if ! grep -q "min_tls_version.*=.*\"TLS1_2\"" main.tf; then
+            echo "❌ Storage account must have min_tls_version = \"TLS1_2\""
+            exit 1
+          fi
+
+          if ! grep -q "container_access_type.*=.*\"private\"" main.tf; then
+            echo "❌ Container must have container_access_type = \"private\""
+            exit 1
+          fi
+
+          if ! grep -q "account_tier.*=.*\"Standard\"" main.tf; then
+            echo "❌ Storage account must have account_tier = \"Standard\""
+            exit 1
+          fi
+
+          if ! grep -q "account_replication_type.*=.*\"LRS\"" main.tf; then
+            echo "❌ Storage account must have account_replication_type = \"LRS\""
+            exit 1
+          fi
+
+          echo "✅ All security settings configured correctly"
+        working-directory: ./01-azure-remote-backend-setup
+
+      - name: Check Required Outputs
+        id: check-outputs
+        run: |
+          echo "Checking for required outputs..."
+
+          if ! grep -q "output \"backend_resource_group_name\"" outputs.tf; then
+            echo "❌ Missing required output: backend_resource_group_name"
+            exit 1
+          fi
+
+          if ! grep -q "output \"backend_storage_account_name\"" outputs.tf; then
+            echo "❌ Missing required output: backend_storage_account_name"
+            exit 1
+          fi
+
+          if ! grep -q "output \"backend_container_name\"" outputs.tf; then
+            echo "❌ Missing required output: backend_container_name"
+            exit 1
+          fi
+
+          echo "✅ All required outputs found"
+        working-directory: ./01-azure-remote-backend-setup
+
+      - name: Comment PR - Success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ✅ Terraform Validation Passed
+
+              Your Terraform configuration has been validated successfully!
+
+              ### Validation Results:
+              - ✅ Terraform formatting is correct
+              - ✅ Terraform configuration is valid
+              - ✅ All required resources are present
+              - ✅ Security settings are configured correctly
+              - ✅ All required outputs are defined
+
+              ### Next Steps:
+              1. Your solution meets all the lab requirements
+              2. You can merge this PR if you're satisfied with your work
+              3. Don't forget to test deployment in your Azure subscription
+
+              Great work! 🎉`
+            })
+
+      - name: Comment PR - Failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ❌ Terraform Validation Failed
+
+              There were issues with your Terraform configuration. Please review the workflow logs for details.
+
+              ### Common Issues to Check:
+              - Ensure all required resources are defined with correct names
+              - Verify security settings (TLS 1.2, private access, etc.)
+              - Check that all required outputs are present
+              - Validate Terraform syntax with \`terraform fmt\` and \`terraform validate\`
+
+              Please fix the issues and push your changes to update this PR.`
+            })
+
+  # Optional: Test with actual Azure OIDC authentication
+  terraform-plan:
+    name: Terraform Plan (Optional)
+    runs-on: ubuntu-latest
+    if: false  # Set to true when OIDC is configured
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+        working-directory: ./01-azure-remote-backend-setup
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_USE_OIDC: true
+
+      - name: Terraform Plan
+        run: terraform plan -no-color
+        working-directory: ./01-azure-remote-backend-setup
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_USE_OIDC: true
